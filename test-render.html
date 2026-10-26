@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-workbench · 离线 UI 预览</title>
+<style>
+  /* 预览页壳：只提供 --dsw-* token 与页面布局；插件样式由 lib/client.js 自己注入。 */
+  :root{
+    --dsw-alias-bg-base:#f6f7f9; --dsw-alias-bg-layer-1:#ffffff; --dsw-alias-bg-layer-2:#ffffff;
+    --dsw-alias-label-primary:#191f28; --dsw-alias-label-secondary:#637182; --dsw-alias-label-tertiary:#98a2b3;
+    --dsw-alias-border-l1:#e3e7ed; --dsw-alias-border-l2:#edf0f4; --dsw-alias-border-l3:#d5dae2;
+    --dsw-alias-interactive-bg-hover:rgba(38,49,72,.06);
+    --dsw-alias-state-business-primary:#4176e6; --dsw-alias-state-business-tertiary:#e8effd;
+    --dsw-alias-state-success-primary:#12b76a; --dsw-alias-state-success-tertiary:#e7f8f0;
+    --dsw-alias-state-warn-primary:#f79009; --dsw-alias-state-warn-tertiary:#fdf2e3;
+    --dsw-alias-state-error-primary:#f04438; --dsw-alias-state-error-tertiary:rgba(240,68,56,.12);
+    --dsw-alias-overlay-bg:rgba(16,24,40,.32);
+    --dsw-elevation-prominent:0 8px 24px rgba(16,24,40,.18);
+  }
+  body[data-theme="dark"]{
+    --dsw-alias-bg-base:#171a20; --dsw-alias-bg-layer-1:#20242c; --dsw-alias-bg-layer-2:#262b34;
+    --dsw-alias-label-primary:#eef1f6; --dsw-alias-label-secondary:#a7b0bf; --dsw-alias-label-tertiary:#7d8797;
+    --dsw-alias-border-l1:#333945; --dsw-alias-border-l2:#2c323d; --dsw-alias-border-l3:#3f4652;
+    --dsw-alias-interactive-bg-hover:rgba(255,255,255,.08);
+    --dsw-alias-state-business-primary:#7ea2ff; --dsw-alias-state-business-tertiary:#273349;
+    --dsw-alias-state-success-primary:#4ed17e; --dsw-alias-state-success-tertiary:#1e352a;
+    --dsw-alias-state-warn-primary:#f7ad31; --dsw-alias-state-warn-tertiary:#3a2d1b;
+    --dsw-alias-state-error-primary:#f25a5a; --dsw-alias-state-error-tertiary:rgba(242,90,90,.16);
+    --dsw-alias-overlay-bg:rgba(0,0,0,.55);
+    --dsw-elevation-prominent:0 8px 24px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+    -webkit-font-smoothing:antialiased;padding:0 0 40px}
+  .pv-bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:12px 20px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+  .pv-bar-title{font-size:14px;font-weight:600}
+  .pv-bar-note{font-size:11px;color:var(--dsw-alias-label-secondary)}
+  .pv-bar-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .pv-btn{appearance:none;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);
+    color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;min-height:28px;padding:4px 10px;cursor:pointer}
+  .pv-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+  main{max-width:1180px;margin:0 auto;padding:20px}
+  .pv-block{border:1px solid var(--dsw-alias-border-l1);border-radius:16px;background:var(--dsw-alias-bg-layer-1);padding:16px;margin-bottom:20px}
+  .pv-block-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .pv-block-title{font-size:14px;font-weight:600}
+  .pv-block-desc{font-size:11px;color:var(--dsw-alias-label-secondary)}
+  .pv-frame{border:1px dashed var(--dsw-alias-border-l2);border-radius:16px;padding:16px;background:var(--dsw-alias-bg-base);position:relative;overflow:auto}
+  .pv-frame .wb-overlay{position:absolute;inset:0;border-radius:16px}
+  .pv-frame .wb-modal{max-height:none}
+  .pv-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+  .pv-status{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
+  .pv-status b{font-weight:600;color:var(--dsw-alias-label-primary)}
+  .pv-status .ok{color:var(--dsw-alias-state-success-primary)}
+  .pv-status .bad{color:var(--dsw-alias-state-error-primary)}
+  .pv-tbl{width:100%;border-collapse:collapse;font-size:12px}
+  .pv-tbl th,.pv-tbl td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l2);vertical-align:top}
+  .pv-tbl th{font-size:11px;color:var(--dsw-alias-label-secondary);font-weight:600}
+  .pv-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+  .pv-errlist{margin:8px 0 0;padding:0;list-style:none;font-size:11px;color:var(--dsw-alias-state-error-primary);white-space:pre-wrap}
+  .pv-icons{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .pv-iconcell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;min-width:96px}
+  .pv-iconcell .capp{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+  @media (max-width:720px){main{padding:12px}.pv-bar{padding:10px 12px}}
+</style>
+</head>
+<body data-theme="light" data-lang="zh">
+<div class="pv-bar">
+  <span class="pv-bar-title">dsh-workbench · 离线 UI 预览</span>
+  <span class="pv-bar-note">假数据 · 不发任何网络请求 · 不重启 dsh</span>
+  <div class="pv-bar-actions">
+    <button class="pv-btn" id="themeBtn" type="button">切换深色</button>
+    <button class="pv-btn" id="langBtn" type="button">English</button>
+    <button class="pv-btn" id="renderBtn" type="button">重新渲染</button>
+  </div>
+</div>
+
+<main>
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">自检</span>
+      <span class="pv-block-desc">槽位 / i18n / 样式注入 / 控制台错误</span>
+    </div>
+    <div class="pv-status" id="status"></div>
+    <ul class="pv-errlist" id="errlist"></ul>
+  </section>
+
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">main · key workbench</span>
+      <span class="pv-block-desc">工作台主面板（状态卡 / 监听规则 / 最近事件）</span>
+    </div>
+    <div class="pv-frame" id="panelPreview"></div>
+  </section>
+
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">settings.section · id workbench</span>
+      <span class="pv-block-desc">全局配置（本地草稿态：dirty = true）</span>
+    </div>
+    <div class="pv-frame" id="settingsPreview"></div>
+  </section>
+
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">ChatPicker</span>
+      <span class="pv-block-desc">「添加群」选择器（lark.chats 假数据）</span>
+    </div>
+    <div class="pv-frame" id="pickerPreview"></div>
+  </section>
+
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">sidebar.panellist · id workbench</span>
+      <span class="pv-block-desc">16/18px 图标（currentColor）</span>
+    </div>
+    <div class="pv-icons" id="iconPreview"></div>
+  </section>
+
+  <section class="pv-block">
+    <div class="pv-block-head">
+      <span class="pv-block-title">槽位注册</span>
+      <span class="pv-block-desc">apply(ctx) 后捕获到的 register 调用</span>
+    </div>
+    <table class="pv-tbl" id="slotsTable"></table>
+  </section>
+</main>
+
+<script>
+// ---------------------------------------------------------------- 加载前桩：ModuleLoader / React / fetch / ctx
+(function () {
+  'use strict'
+  var errors = []
+  window.__wbErrors = errors
+  var nativeError = console.error.bind(console)
+  console.error = function () {
+    errors.push(Array.prototype.map.call(arguments, String).join(' '))
+    nativeError.apply(null, arguments)
+  }
+  window.addEventListener('error', function (event) {
+    errors.push(String(event.message || 'window error'))
+  })
+
+  function noop() {}
+  function Component(props) { this.props = props || {} }
+  Component.prototype.setState = noop
+  window.__wbHarness = { definition: null }
+  window.__ModuleLoader__ = {
+    load: function (entry) { window.__wbHarness.definition = entry },
+  }
+  window.React = {
+    createElement: function (type, props) {
+      return { type: type, props: props || {}, children: Array.prototype.slice.call(arguments, 2) }
+    },
+    Fragment: 'fragment',
+    Component: Component,
+    memo: function (fn) { return fn },
+    useState: function (init) { return [typeof init === 'function' ? init() : init, noop] },
+    useRef: function (value) { return { current: value } },
+    useEffect: noop,
+    useMemo: function (fn) { try { return fn() } catch (error) { return undefined } },
+    useCallback: function (fn) { return fn },
+    useSyncExternalStore: function () { return undefined },
+  }
+  window.ReactDOM = { createPortal: function (node) { return node } }
+
+  var NOW = Date.now()
+  function iso(ms) { return new Date(NOW - ms).toISOString() }
+
+  // 与 docs/config.example.json 同构的假配置（占位 ID，不含真实数据）。
+  window.__wbFixture = {
+    config: {
+      version: 1,
+      channels: {
+        lark: {
+          enabled: true,
+          identity: 'user',
+          pollSeconds: 60,
+          watchedChats: [
+            { chatId: 'oc_xxx_group_frontend', name: '研发-前端', type: 'group', mode: 'mention', keywords: ['review', '看下这个'], allowReviewCommand: true },
+            { chatId: 'oc_xxx_p2p_demo', name: '示例私聊', type: 'p2p', mode: 'keyword', keywords: ['pr'], allowReviewCommand: false },
+          ],
+          p2pWhitelist: ['ou_xxx'],
+        },
+        github: {
+          enabled: true,
+          pollSeconds: 180,
+          watchedRepos: [
+            { repo: 'acme/web-app', path: '~/demo/web-app', onOpened: true, onNewCommits: true, skipDraft: true, labels: ['review'] },
+            { repo: 'acme/api', path: '', onOpened: false, onNewCommits: true, skipDraft: true, labels: [] },
+          ],
+        },
+      },
+      features: {
+        'pr-review': {
+          enabled: true,
+          model: null,
+          workspace: { mode: 'repo' },
+          sinks: { githubComment: true, larkReply: true, summaryChatId: '', draftConfirm: true },
+          budget: { timeoutSeconds: 900, maxFindings: 8, maxDiffBytes: 120000, dailyRuns: 50 },
+          permission: 'read-only',
+        },
+      },
+      router: { classifier: { enabled: false, model: null, dailyBudget: 200 } },
+      defaults: { model: { provider: 'deepseek', model: 'deepseek-chat' }, workspace: '~/demo/repo' },
+      safety: { outbound: 'draft', rateLimitPerHour: 10, allowApprove: false },
+      storage: { contentRetentionHours: 24, historyLimit: 200, logRetentionDays: 7 },
+    },
+    status: {
+      lark: { enabled: true, identity: 'user', openId: 'ou_xxx', pollSeconds: 60, lastPollAt: iso(42000), nextPollAt: iso(-18000), lastError: '', watchedChats: 2 },
+      github: { enabled: true, user: 'demo-user', pollSeconds: 180, lastPollAt: iso(95000), nextPollAt: iso(-85000), lastError: '', watchedRepos: 2 },
+      counters: { larkMessages: 42, larkMatched: 5, githubPulls: 12, githubMatched: 3 },
+    },
+    events: [
+      { id: 'ev_01', at: iso(60000), source: 'lark', kind: 'message', title: '群「研发-前端」· 看下这个 PR 的登录态处理', url: 'https://github.com/acme/web-app/pull/128', chatId: 'oc_xxx_group_frontend', repo: '', matched: true, ruleId: 'chat:oc_xxx_group_frontend', reason: 'pr-link', status: 'matched' },
+      { id: 'ev_02', at: iso(240000), source: 'github', kind: 'pr', title: 'acme/web-app#131 · 修复会话过期后重复登录', url: 'https://github.com/acme/web-app/pull/131', chatId: '', repo: 'acme/web-app', matched: true, ruleId: 'repo:acme/web-app', reason: 'opened', status: 'matched' },
+      { id: 'ev_03', at: iso(360000), source: 'lark', kind: 'baseline', title: '群「研发-前端」· 基线建立，不产生命中', url: '', chatId: 'oc_xxx_group_frontend', repo: '', matched: false, ruleId: 'chat:oc_xxx_group_frontend', reason: 'baseline', status: 'baseline' },
+      { id: 'ev_04', at: iso(720000), source: 'github', kind: 'commit', title: 'acme/api#77 · 新增分页参数', url: 'https://github.com/acme/api/pull/77', chatId: '', repo: 'acme/api', matched: true, ruleId: 'repo:acme/api', reason: 'commits', status: 'matched' },
+      { id: 'ev_05', at: iso(900000), source: 'lark', kind: 'message', title: '私聊「示例私聊」· 关键词未命中（off）', url: '', chatId: 'oc_xxx_p2p_demo', repo: '', matched: false, ruleId: 'chat:oc_xxx_p2p_demo', reason: 'keyword', status: 'ignored' },
+      { id: 'ev_06', at: iso(1200000), source: 'github', kind: 'baseline', title: 'acme/api#78 · 基线建立', url: '', chatId: '', repo: 'acme/api', matched: false, ruleId: 'repo:acme/api', reason: 'baseline', status: 'baseline' },
+    ],
+    stats: { today: { events: 12, matched: 3 } },
+  }
+  window.__wbChats = [
+    { chatId: 'oc_xxx_qa_group', name: 'QA-验证', type: 'group', memberCount: 12 },
+    { chatId: 'oc_xxx_design_group', name: '设计-评审', type: 'group', memberCount: 8 },
+    { chatId: 'oc_xxx_ops_group', name: '运维-告警', type: 'group', memberCount: 23 },
+    { chatId: 'oc_xxx_group_frontend', name: '研发-前端', type: 'group', memberCount: 31 },
+  ]
+  window.fetch = function () {
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: function () { return Promise.resolve({ ok: true, value: window.__wbFixture }) },
+    })
+  }
+})()
+</script>
+<script src="lib/client.js" onerror="window.__wbScriptError = true"></script>
+<script>
+// ---------------------------------------------------------------- 离线 harness：apply(ctx) + 纯展示层静态渲染
+(function () {
+  'use strict'
+
+  var NS = 'dsh-workbench'
+  var errors = window.__wbErrors
+  var dictionaries = {}
+  var slots = []
+  var lang = 'zh'
+  var h = window.React.createElement
+  var noop = function () {}
+  var definition = window.__wbHarness && window.__wbHarness.definition
+
+  function report(message) { errors.push(String(message)) }
+
+  var ctx = {
+    effect: function (fn) {
+      try {
+        var out = fn()
+        return typeof out === 'function' ? out : noop
+      } catch (error) {
+        report('effect: ' + (error && error.message ? error.message : error))
+        return noop
+      }
+    },
+    interval: function () { return noop },
+    timeout: function () { return noop },
+    get: function () { return undefined },
+    on: function () { return noop },
+    locale: {
+      register: function (namespace, value) { dictionaries[namespace] = value; return noop },
+      subscribe: function () { return noop },
+      bind: function (namespace) {
+        return function (key, params) { return dictText(namespace, key, params) }
+      },
+      current: function () { return lang },
+    },
+    slots: {
+      inject: function (name, callback) {
+        try { callback() } catch (error) { report('slot ' + name + ': ' + (error && error.message ? error.message : error)) }
+        return noop
+      },
+      register: function (options, component) { slots.push({ options: options, component: component }); return noop },
+      entriesOfSlot: function () { return [] },
+      subscribe: function () { return noop },
+      renderSlot: function () { return null },
+    },
+    layout: { selectPanel: noop },
+  }
+
+  function dictText(namespace, key, params) {
+    var dict = dictionaries[namespace] || {}
+    var source = dict[lang] || dict.zh || {}
+    var value = source[key]
+    if (value == null) value = key
+    if (params) Object.keys(params).forEach(function (name) {
+      value = value.split('{' + name + '}').join(String(params[name]))
+    })
+    return value
+  }
+
+  // ---------------------------------------------------------------- 加载 bundle
+  var plugin = null
+  if (definition && typeof definition.factory === 'function') {
+    try {
+      plugin = definition.factory(function (name) {
+        if (name === 'react') return window.React
+        if (name === 'react-dom') return window.ReactDOM
+        return window.React
+      })
+      if (plugin && typeof plugin.apply === 'function') plugin.apply(ctx)
+    } catch (error) {
+      report('apply: ' + (error && error.message ? error.message : error))
+    }
+  } else if (window.__wbScriptError) {
+    report('lib/client.js 加载失败：请确认 test-render.html 与 lib/ 在同一目录，且没有被浏览器拦截 file:// 子资源')
+  } else {
+    report('lib/client.js 没有通过 window.__ModuleLoader__.load 注册')
+  }
+
+  // ---------------------------------------------------------------- 极简元素树渲染器（只渲染纯展示层）
+  function renderNode(node) {
+    if (node == null || node === false || node === true) return document.createTextNode('')
+    if (typeof node === 'string' || typeof node === 'number') return document.createTextNode(String(node))
+    if (Array.isArray(node)) {
+      var frag = document.createDocumentFragment()
+      node.forEach(function (child) { frag.appendChild(renderNode(child)) })
+      return frag
+    }
+    if (typeof node === 'object' && node.type === 'fragment') {
+      var frag2 = document.createDocumentFragment()
+      appendKids(frag2, node)
+      return frag2
+    }
+    if (typeof node === 'object' && typeof node.type === 'function') {
+      return renderNode(node.type(buildProps(node)))
+    }
+    if (typeof node === 'object' && typeof node.type === 'string') {
+      var dom = document.createElement(node.type)
+      var props = node.props || {}
+      Object.keys(props).forEach(function (key) {
+        var value = props[key]
+        if (key === 'children' || value == null || value === false) return
+        if (key === 'className') dom.setAttribute('class', String(value))
+        else if (key === 'style' && typeof value === 'object') Object.assign(dom.style, value)
+        else if (key.slice(0, 2) === 'on' && typeof value === 'function') return
+        else if (key === 'key' || key === 'ref') return
+        else if (value === true) dom.setAttribute(key, '')
+        else dom.setAttribute(key, String(value))
+      })
+      appendKids(dom, node)
+      return dom
+    }
+    return document.createTextNode('')
+  }
+  function buildProps(node) {
+    var props = Object.assign({}, node.props || {})
+    var kids = (node.children || []).slice()
+    if (props.children != null) kids.push(props.children)
+    if (kids.length > 0) props.children = kids.length === 1 ? kids[0] : kids
+    return props
+  }
+  function appendKids(parent, node) {
+    var props = node.props || {}
+    var kids = (node.children || []).slice()
+    if (props.children != null) kids.push(props.children)
+    kids.forEach(function (child) { parent.appendChild(renderNode(child)) })
+  }
+
+  // ---------------------------------------------------------------- 渲染
+  function makeT() {
+    var test = plugin && plugin.__test
+    if (test && typeof test.createT === 'function') {
+      return test.createT(function () { return function (key, params) { return dictText(NS, key, params) } })
+    }
+    return function (key, params) { return dictText(NS, key, params) }
+  }
+
+  var noopHandlers = {
+    onToggleLark: noop, onLarkPoll: noop,
+    onToggleGithub: noop, onGithubPoll: noop,
+    onChatField: noop, onRemoveChat: noop,
+    onAddRepo: noop, onRemoveRepo: noop, onRepoField: noop,
+    onModelText: noop, onWorkspace: noop, onStorage: noop,
+    onOpenPicker: noop, onPickerToggle: noop, onPickerConfirm: noop, onPickerClose: noop,
+    onSave: noop, onDiscard: noop,
+  }
+
+  function renderAll() {
+    var fixture = window.__wbFixture
+    var t = makeT()
+    var test = (plugin && plugin.__test) || {}
+    var components = test.components || {}
+    var target = document.getElementById('panelPreview')
+    var settingsTarget = document.getElementById('settingsPreview')
+    var pickerTarget = document.getElementById('pickerPreview')
+    var iconTarget = document.getElementById('iconPreview')
+    target.textContent = ''
+    settingsTarget.textContent = ''
+    pickerTarget.textContent = ''
+    iconTarget.textContent = ''
+
+    try {
+      if (typeof components.PanelView === 'function') {
+        target.appendChild(renderNode(h(components.PanelView, {
+          data: fixture,
+          loading: false,
+          error: '',
+          actionError: '',
+          busy: '',
+          confirmClear: false,
+          clearNotice: '',
+          t: t,
+          onRefresh: noop,
+          onRetry: noop,
+          onCheckLark: noop,
+          onCheckGithub: noop,
+          onClearHistory: noop,
+          onConfirmClear: noop,
+          onCancelClear: noop,
+        })))
+      }
+      if (typeof components.SettingsView === 'function') {
+        var draft = typeof test.normalizeConfig === 'function' ? test.normalizeConfig(fixture.config) : fixture.config
+        var modelText = typeof test.modelToText === 'function' ? test.modelToText(fixture.config.defaults.model) : ''
+        settingsTarget.appendChild(renderNode(h(components.SettingsView, {
+          draft: draft,
+          modelText: modelText,
+          dirty: true,
+          saving: false,
+          notice: { ok: true, text: dictText(NS, 'settings.saved') },
+          picker: { open: false, loading: false, error: '', chats: [], selected: [], existing: [], busy: false },
+          loading: false,
+          error: '',
+          actionError: '',
+          t: t,
+          handlers: noopHandlers,
+          onRetry: noop,
+        })))
+      }
+      if (typeof components.ChatPicker === 'function') {
+        pickerTarget.appendChild(renderNode(h(components.ChatPicker, {
+          open: true,
+          loading: false,
+          error: '',
+          chats: window.__wbChats,
+          selected: ['oc_xxx_qa_group'],
+          existing: ['oc_xxx_group_frontend'],
+          busy: false,
+          t: t,
+          onToggle: noop,
+          onConfirm: noop,
+          onClose: noop,
+        })))
+      }
+      if (typeof components.PanelIcon === 'function') {
+        iconTarget.appendChild(renderNode(h(components.PanelIcon, null)))
+      }
+    } catch (error) {
+      report('render: ' + (error && error.message ? error.message : error))
+    }
+    renderSlots(t)
+    renderStatus()
+  }
+
+  function renderSlots(t) {
+    var table = document.getElementById('slotsTable')
+    table.textContent = ''
+    var head = document.createElement('tr')
+    ;['slot', 'id / key', 'order', 'label', 'component'].forEach(function (label) {
+      var th = document.createElement('th')
+      th.textContent = label
+      head.appendChild(th)
+    })
+    table.appendChild(head)
+    slots.forEach(function (entry) {
+      var options = entry.options || {}
+      var row = document.createElement('tr')
+      var cells = [
+        options.name || '',
+        options.id != null ? options.id : (options.key != null ? options.key : ''),
+        options.order != null ? String(options.order) : '—',
+        typeof options.label === 'function' ? String(options.label()) : '',
+        typeof entry.component === 'function' ? (entry.component.name || 'anonymous') : String(typeof entry.component),
+      ]
+      cells.forEach(function (text) {
+        var td = document.createElement('td')
+        td.textContent = text
+        if (text === (options.name || '')) td.className = 'pv-mono'
+        row.appendChild(td)
+      })
+      table.appendChild(row)
+    })
+  }
+
+  function renderStatus() {
+    var status = document.getElementById('status')
+    status.textContent = ''
+    var errlist = document.getElementById('errlist')
+    errlist.textContent = ''
+
+    var test = (plugin && plugin.__test) || {}
+    var zhKeys = test.DICT_ZH ? Object.keys(test.DICT_ZH) : []
+    var enKeys = test.DICT_EN ? Object.keys(test.DICT_EN) : []
+    var missingEn = zhKeys.filter(function (key) { return enKeys.indexOf(key) < 0 })
+    var missingZh = enKeys.filter(function (key) { return zhKeys.indexOf(key) < 0 })
+    var slotNames = slots.map(function (entry) { return (entry.options || {}).name })
+    var panelSlot = slots.filter(function (entry) { return (entry.options || {}).name === 'main' })[0] || { options: {} }
+    var sideSlot = slots.filter(function (entry) { return (entry.options || {}).name === 'sidebar.panellist' })[0] || { options: {} }
+    var settingsSlot = slots.filter(function (entry) { return (entry.options || {}).name === 'settings.section' })[0] || { options: {} }
+    var checks = [
+      { label: 'bundle 加载', ok: plugin != null },
+      { label: '槽位 = settings.section / main / sidebar.panellist', ok: slotNames.length === 3 && slotNames.indexOf('settings.section') >= 0 && slotNames.indexOf('main') >= 0 && slotNames.indexOf('sidebar.panellist') >= 0 },
+      { label: 'main.key = workbench', ok: panelSlot.options.key === 'workbench' },
+      { label: 'panellist.id = workbench / order 5', ok: sideSlot.options.id === 'workbench' && sideSlot.options.order === 5 },
+      { label: 'settings.id = workbench / order 44', ok: settingsSlot.options.id === 'workbench' && settingsSlot.options.order === 44 },
+      { label: 'locale NS = dsh-workbench 已注册', ok: dictionaries[NS] != null },
+      { label: 'DICT zh/en 键一致（' + zhKeys.length + ' 键）', ok: zhKeys.length > 0 && missingEn.length === 0 && missingZh.length === 0 },
+      { label: '样式已注入 #dsh-workbench-style', ok: document.getElementById('dsh-workbench-style') != null },
+      { label: '渲染无异常 / 控制台 0 错误', ok: errors.length === 0 },
+    ]
+
+    checks.forEach(function (check) {
+      var item = document.createElement('span')
+      var name = document.createElement('b')
+      name.textContent = check.label
+      item.appendChild(document.createTextNode((check.ok ? 'PASS ' : 'FAIL ') + '· '))
+      item.appendChild(name)
+      item.className = check.ok ? 'ok' : 'bad'
+      var wrap = document.createElement('span')
+      wrap.textContent = ''
+      wrap.appendChild(item)
+      status.appendChild(wrap)
+    })
+    if (missingEn.length || missingZh.length) {
+      var line = document.createElement('li')
+      line.textContent = 'en 缺：' + missingEn.join(', ') + ' | zh 缺：' + missingZh.join(', ')
+      errlist.appendChild(line)
+    }
+    errors.forEach(function (message) {
+      var line = document.createElement('li')
+      line.textContent = message
+      errlist.appendChild(line)
+    })
+    // 结果同步到 window，便于外部自动化断言。
+    window.__wbReport = {
+      checks: checks,
+      slotCount: slots.length,
+      i18nKeys: zhKeys.length,
+      errors: errors.slice(),
+    }
+  }
+
+  // ---------------------------------------------------------------- 交互
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var dark = document.body.getAttribute('data-theme') === 'dark'
+    document.body.setAttribute('data-theme', dark ? 'light' : 'dark')
+    this.textContent = dark ? '切换深色' : '切换浅色'
+  })
+  document.getElementById('langBtn').addEventListener('click', function () {
+    lang = lang === 'zh' ? 'en' : 'zh'
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+    this.textContent = lang === 'zh' ? 'English' : '中文'
+    renderAll()
+  })
+  document.getElementById('renderBtn').addEventListener('click', function () { renderAll() })
+
+  if (!plugin) {
+    report('插件对象为空（见上面的加载错误）')
+  }
+  renderAll()
+})()
+</script>
+</body>
+</html>

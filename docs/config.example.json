@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "channels": {
+    "lark": {
+      "enabled": true,
+      "identity": "user",
+      "pollSeconds": 60,
+      "watchedChats": [
+        {
+          "chatId": "oc_xxxxxxxxxxxxxxxx",
+          "name": "研发-前端",
+          "type": "group",
+          "mode": "mention",
+          "keywords": ["review", "看下这个"],
+          "allowReviewCommand": true
+        }
+      ],
+      "p2pWhitelist": []
+    },
+    "github": {
+      "enabled": true,
+      "pollSeconds": 180,
+      "watchedRepos": [
+        {
+          "repo": "PonyDevAI/dsh-workbench",
+          "path": "~/deepseek/plugins/dsh-workbench",
+          "onOpened": true,
+          "onNewCommits": true,
+          "skipDraft": true,
+          "labels": []
+        }
+      ]
+    }
+  },
+  "features": {
+    "pr-review": {
+      "enabled": true,
+      "model": null,
+      "workspace": { "mode": "repo" },
+      "sinks": {
+        "githubComment": true,
+        "larkReply": true,
+        "summaryChatId": "",
+        "draftConfirm": true
+      },
+      "budget": {
+        "timeoutSeconds": 900,
+        "maxFindings": 8,
+        "maxDiffBytes": 120000,
+        "dailyRuns": 50
+      },
+      "permission": "read-only"
+    }
+  },
+  "router": {
+    "classifier": { "enabled": false, "model": null, "dailyBudget": 200 }
+  },
+  "defaults": {
+    "model": null,
+    "workspace": "~/deepseek/workbench"
+  },
+  "safety": {
+    "outbound": "draft",
+    "rateLimitPerHour": 10,
+    "allowApprove": false
+  },
+  "storage": {
+    "contentRetentionHours": 24,
+    "historyLimit": 200,
+    "logRetentionDays": 7
+  }
+}

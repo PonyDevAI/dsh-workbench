@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workbench",
+    "description": "Connect Lark and GitHub as your own identity and read-only collect incremental messages and pull request activity as reviewable events; v0.1 sends no messages and runs no reviews."
+  }
+}

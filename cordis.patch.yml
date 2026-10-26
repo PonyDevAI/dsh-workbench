@@ -1,0 +1,8 @@
+# 把个人工作台插入 profile。
+- insert:
+    - id: workbench
+      name: '@ponydev/dsh-workbench'
+      config:
+        stateDir: ''
+        larkPollSeconds: 60
+        githubPollSeconds: 180
