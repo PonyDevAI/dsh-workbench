@@ -1,9 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "channels": {
     "lark": {
       "enabled": true,
-      "identity": "user",
+      "accountId": "acc_xxxxxxxxxxxx",
       "pollSeconds": 60,
       "watchedChats": [
         {
@@ -11,7 +11,10 @@
           "name": "研发-前端",
           "type": "group",
           "mode": "mention",
-          "keywords": ["review", "看下这个"],
+          "keywords": [
+            "review",
+            "看下这个"
+          ],
           "allowReviewCommand": true
         }
       ],
@@ -19,6 +22,7 @@
     },
     "github": {
       "enabled": true,
+      "accountId": "acc_yyyyyyyyyyyy",
       "pollSeconds": 180,
       "watchedRepos": [
         {
@@ -36,7 +40,9 @@
     "pr-review": {
       "enabled": true,
       "model": null,
-      "workspace": { "mode": "repo" },
+      "workspace": {
+        "mode": "repo"
+      },
       "sinks": {
         "githubComment": true,
         "larkReply": true,
@@ -53,7 +59,11 @@
     }
   },
   "router": {
-    "classifier": { "enabled": false, "model": null, "dailyBudget": 200 }
+    "classifier": {
+      "enabled": false,
+      "model": null,
+      "dailyBudget": 200
+    }
   },
   "defaults": {
     "model": null,

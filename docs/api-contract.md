@@ -1,9 +1,9 @@
-# dsh-workbench · Host ⇄ Client API 契约（v0.1）
+# dsh-workbench · Host ⇄ Client API 契约（v0.2.0）
 
 > 所有请求：`POST /workbench`，body `{ endpoint, payload }`。
 > 响应：`{ ok: true, value }` 或 `{ ok: false, error: { code, message } }`。
 > 认证：`ctx.connection.admit(req)`；写操作必须带 `x-dsh-workbench-client: 1`；body ≤ 1 MiB，仅 JSON。
-> v0.1 只做「采集 / 规则 / 历史」，**不发送任何消息、不执行 review**。
+> v0.2.0 = `采集 / 规则 / 历史 + 账号与独立授权`；**不发送任何消息、不执行 review、不写 PR 评论**。
 
 ## 读接口
 
@@ -15,6 +15,8 @@
   "status": {
     "lark": {
       "enabled": true,
+      "accountId": "acc_xxx",
+      "account": { /* AccountView | null */ },
       "identity": "user",
       "openId": "ou_xxx",              // 启动时从 lark-cli auth status 解析；失败为 ''
       "pollSeconds": 60,
@@ -25,6 +27,8 @@
     },
     "github": {
       "enabled": true,
+      "accountId": "acc_yyy",
+      "account": { /* AccountView | null */ },
       "user": "PonyDevAI",
       "pollSeconds": 180,
       "lastPollAt": "2026-10-26T12:00:00.000Z",
@@ -39,6 +43,7 @@
       "githubMatched": 3
     }
   },
+  "accounts": [ /* AccountView[]，见 accounts-auth.md §7；无明文凭据 */ ],
   "events": [ /* 最近 100 条，倒序，见下 */ ],
   "stats": { "today": { "events": 12, "matched": 3 } }
 }
@@ -70,7 +75,7 @@
 { "chats": [{ "chatId": "oc_xxx", "name": "研发-前端", "type": "group", "memberCount": 12 }] }
 ```
 
-来自 `lark-cli im +chat-list --as user`；失败回 `{ ok:false, error:{ code:'lark/not-configured' } }`。
+来自已授权飞书账号的 user token（OpenAPI `GET /open-apis/im/v1/chats`）；失败回 `{ ok:false, error:{ code:'account/needs-auth' | 'account/not-found' } }`。
 
 ### `rules.test`
 
@@ -99,6 +104,22 @@
 | `lark.check` | `{}` | `{ started: true }`（立即跑一轮 Lark 轮询） |
 | `github.check` | `{}` | `{ started: true }`（立即跑一轮 GitHub 轮询） |
 | `history.clear` | `{}` | `{ ok: true }`（清 events/stats，不动游标与 seen） |
+
+## 账号与独立授权（v0.2.0 计划）
+
+> 详细设计见 [`accounts-auth.md`](accounts-auth.md)。v0.2.0 起运行时不再依赖 `lark-cli` / `gh`，账号与凭据由插件自己管理。
+
+| endpoint | payload | value |
+|---|---|---|
+| `accounts.list` | `{}` | `{ accounts: AccountView[] }`（无明文凭据） |
+| `accounts.feishu.start` | `{ appId, appSecret, brand?, scope? }` | `{ accountId, userCode, verificationUri, expiresIn, interval }` |
+| `accounts.feishu.poll` | `{ accountId }` | `{ status: pending/ok/error, account?, error? }` |
+| `accounts.github.add` | `{ token }` | `{ account: AccountView }` |
+| `accounts.test` | `{ accountId }` | `{ ok, status, identity?, error? }` |
+| `accounts.remove` | `{ accountId }` | `{ ok: true }`（清凭据并标 disabled） |
+| `accounts.importGh` | `{}` | `{ account: AccountView }`（可选，一次性 `gh auth token`） |
+
+`AccountView` 字段见 `accounts-auth.md` §7；错误码新增 `account/*` 系列。
 
 ## 规则语义（v0.1）
 

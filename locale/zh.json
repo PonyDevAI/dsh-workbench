@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "工作台",
-    "description": "以本人身份接入 Lark 与 GitHub，按白名单规则只读采集增量消息与 PR 动态，记录为可回看的事件；v0.1 不发送消息、不执行 review。"
+    "description": "以本人身份只读接入 Lark 与 GitHub：插件自己管理账号与授权（飞书 Device Flow / GitHub PAT），按白名单规则采集增量并记录为可回看的事件；v0.2.0 仍不发送消息、不执行 review。"
   }
 }

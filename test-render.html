@@ -70,7 +70,7 @@
 <body data-theme="light" data-lang="zh">
 <div class="pv-bar">
   <span class="pv-bar-title">dsh-workbench · 离线 UI 预览</span>
-  <span class="pv-bar-note">假数据 · 不发任何网络请求 · 不重启 dsh</span>
+  <span class="pv-bar-note">假数据（含账号 / needs_auth / Device Flow）· 不发任何网络请求 · 不重启 dsh</span>
   <div class="pv-bar-actions">
     <button class="pv-btn" id="themeBtn" type="button">切换深色</button>
     <button class="pv-btn" id="langBtn" type="button">English</button>
@@ -173,10 +173,11 @@
   // 与 docs/config.example.json 同构的假配置（占位 ID，不含真实数据）。
   window.__wbFixture = {
     config: {
-      version: 1,
+      version: 2,
       channels: {
         lark: {
           enabled: true,
+          accountId: 'acc_feishu_demo',
           identity: 'user',
           pollSeconds: 60,
           watchedChats: [
@@ -187,6 +188,7 @@
         },
         github: {
           enabled: true,
+          accountId: 'acc_github_demo',
           pollSeconds: 180,
           watchedRepos: [
             { repo: 'acme/web-app', path: '~/demo/web-app', onOpened: true, onNewCommits: true, skipDraft: true, labels: ['review'] },
@@ -210,10 +212,52 @@
       storage: { contentRetentionHours: 24, historyLimit: 200, logRetentionDays: 7 },
     },
     status: {
-      lark: { enabled: true, identity: 'user', openId: 'ou_xxx', pollSeconds: 60, lastPollAt: iso(42000), nextPollAt: iso(-18000), lastError: '', watchedChats: 2 },
-      github: { enabled: true, user: 'demo-user', pollSeconds: 180, lastPollAt: iso(95000), nextPollAt: iso(-85000), lastError: '', watchedRepos: 2 },
+      lark: {
+        enabled: true,
+        accountId: 'acc_feishu_demo',
+        account: {
+          id: 'acc_feishu_demo', provider: 'feishu', label: '飞书', brand: 'feishu',
+          identity: { name: 'Pony', openId: 'ou_xxx_demo', login: '' },
+          status: 'ok', scopes: ['im:message', 'offline_access'],
+          expiresAt: iso(-3600000), refreshExpiresAt: iso(-604800000),
+          configuredKeys: ['appSecret', 'accessToken', 'refreshToken'],
+          lastCheckedAt: iso(120000), lastError: '',
+        },
+        pollSeconds: 60, lastPollAt: iso(42000), nextPollAt: iso(-18000), lastError: '', watchedChats: 2,
+      },
+      github: {
+        enabled: true,
+        accountId: 'acc_github_demo',
+        account: {
+          id: 'acc_github_demo', provider: 'github', label: 'GitHub',
+          identity: { name: 'Pony', login: 'demo-user', openId: '' },
+          status: 'needs_auth', scopes: ['repo'],
+          expiresAt: '', refreshExpiresAt: '',
+          configuredKeys: ['token'],
+          lastCheckedAt: iso(240000), lastError: 'token 已失效，请重新授权',
+        },
+        pollSeconds: 180, lastPollAt: iso(95000), nextPollAt: iso(-85000), lastError: '', watchedRepos: 2,
+      },
       counters: { larkMessages: 42, larkMatched: 5, githubPulls: 12, githubMatched: 3 },
     },
+    accounts: [
+      {
+        id: 'acc_feishu_demo', provider: 'feishu', label: '飞书', brand: 'feishu',
+        identity: { name: 'Pony', openId: 'ou_xxx_demo', login: '' },
+        status: 'ok', scopes: ['im:message', 'offline_access'],
+        expiresAt: iso(-3600000), refreshExpiresAt: iso(-604800000),
+        configuredKeys: ['appSecret', 'accessToken', 'refreshToken'],
+        lastCheckedAt: iso(120000), lastError: '',
+      },
+      {
+        id: 'acc_github_demo', provider: 'github', label: 'GitHub',
+        identity: { name: 'Pony', login: 'demo-user', openId: '' },
+        status: 'needs_auth', scopes: ['repo'],
+        expiresAt: '', refreshExpiresAt: '',
+        configuredKeys: ['token'],
+        lastCheckedAt: iso(240000), lastError: 'token 已失效，请重新授权',
+      },
+    ],
     events: [
       { id: 'ev_01', at: iso(60000), source: 'lark', kind: 'message', title: '群「研发-前端」· 看下这个 PR 的登录态处理', url: 'https://github.com/acme/web-app/pull/128', chatId: 'oc_xxx_group_frontend', repo: '', matched: true, ruleId: 'chat:oc_xxx_group_frontend', reason: 'pr-link', status: 'matched' },
       { id: 'ev_02', at: iso(240000), source: 'github', kind: 'pr', title: 'acme/web-app#131 · 修复会话过期后重复登录', url: 'https://github.com/acme/web-app/pull/131', chatId: '', repo: 'acme/web-app', matched: true, ruleId: 'repo:acme/web-app', reason: 'opened', status: 'matched' },
@@ -387,6 +431,12 @@
     onModelText: noop, onWorkspace: noop, onStorage: noop,
     onOpenPicker: noop, onPickerToggle: noop, onPickerConfirm: noop, onPickerClose: noop,
     onSave: noop, onDiscard: noop,
+    onChannelAccount: noop,
+    onRefreshAccounts: noop, onAddFeishu: noop, onAddGithub: noop, onImportGh: noop,
+    onCloseAccountsForm: noop, onFeishuField: noop, onFeishuStart: noop,
+    onFlowCancel: noop, onFlowRetry: noop, onGithubField: noop, onGithubConnect: noop,
+    onTestAccount: noop, onAskRemoveAccount: noop, onRemoveAccount: noop,
+    onCancelRemoveAccount: noop, onReauthAccount: noop,
   }
 
   function renderAll() {
@@ -433,6 +483,23 @@
           saving: false,
           notice: { ok: true, text: dictText(NS, 'settings.saved') },
           picker: { open: false, loading: false, error: '', chats: [], selected: [], existing: [], busy: false },
+          accounts: fixture.accounts,
+          accountsError: '',
+          accountBusy: '',
+          accountsNotice: { ok: true, text: dictText(NS, 'account.feishu.done') },
+          accountTests: { acc_github_demo: { ok: false, text: dictText(NS, 'account.testFailed') } },
+          confirmRemoveId: '',
+          feishuForm: { open: true, appId: 'cli_xxx_demo', appSecret: '********', brand: 'feishu', scope: 'im:message offline_access', error: '' },
+          githubForm: { open: false, token: '', error: '' },
+          flow: {
+            visible: true,
+            accountId: 'acc_feishu_demo',
+            userCode: 'ABCD-EFGH',
+            verificationUri: 'https://example.feishu.cn/device/verify',
+            expiresAt: 0,
+            remainingMs: 180000,
+            error: '',
+          },
           loading: false,
           error: '',
           actionError: '',
@@ -521,6 +588,14 @@
       { label: 'DICT zh/en 键一致（' + zhKeys.length + ' 键）', ok: zhKeys.length > 0 && missingEn.length === 0 && missingZh.length === 0 },
       { label: '样式已注入 #dsh-workbench-style', ok: document.getElementById('dsh-workbench-style') != null },
       { label: '渲染无异常 / 控制台 0 错误', ok: errors.length === 0 },
+      { label: '账号区渲染（身份 / 状态 / 设备码）', ok: (function () {
+        var text = document.getElementById('settingsPreview').textContent
+        return text.indexOf('Pony') >= 0 && text.indexOf('ABCD-EFGH') >= 0 && text.indexOf('需重新授权') >= 0 && text.indexOf('使用账号') >= 0
+      })() },
+      { label: '面板账号状态卡（needs_auth 提示）', ok: (function () {
+        var text = document.getElementById('panelPreview').textContent
+        return text.indexOf('Pony') >= 0 && text.indexOf('需重新授权') >= 0 && text.indexOf('账号') >= 0
+      })() },
     ]
 
     checks.forEach(function (check) {

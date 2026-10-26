@@ -13,6 +13,12 @@ import { matchLark, matchGithub, testRule } from '../lib/rules.js'
 import { WorkbenchState } from '../lib/state.js'
 import { WorkbenchEngine } from '../lib/poller.js'
 import { createApiHandler } from '../lib/api.js'
+import { CredentialStore } from '../lib/credentials.js'
+import { AccountsStore, AccountsService } from '../lib/accounts.js'
+import { createHttpClient } from '../lib/http.js'
+import { FeishuClient } from '../lib/clients/feishu.js'
+import { GithubClient } from '../lib/clients/github.js'
+import { AccountAuth } from '../lib/account-auth.js'
 
 const noopHandle = () => ({ unref () {} })
 const results = []
@@ -90,6 +96,19 @@ function parseBody (text) {
   try { return JSON.parse(text) } catch { return { raw: text } }
 }
 
+function response (body, { status = 200, headers = {} } = {}) {
+  return {
+    ok: status < 400,
+    status,
+    headers: { get: (key) => headers[String(key).toLowerCase()] || '' },
+    text: async () => JSON.stringify(body),
+  }
+}
+
+function jsonFetch (handler) {
+  return async (url, init = {}) => handler(String(url), init)
+}
+
 function fakeApiDeps () {
   const engine = {
     auth: { lark: { openId: 'ou_me' } },
@@ -104,6 +123,14 @@ function fakeApiDeps () {
   return {
     connection: { admit: () => ({}) },
     engine,
+    accounts: { views: async () => [], get: () => undefined, view: async () => null },
+    auth: {
+      startFeishu: async () => ({ accountId: 'acc_x' }),
+      pollStatus: () => ({ status: 'pending' }),
+      addGithub: async () => ({}),
+      test: async () => ({ ok: true }),
+      importGh: async () => ({}),
+    },
     getConfig: () => ({ channels: { lark: { watchedChats: [] }, github: { watchedRepos: [] } } }),
     saveConfig: (raw) => (raw && raw.__invalid ? { ok: false, errors: ['bad config'] } : { ok: true, config: { ok: true }, warnings: [] }),
     state,
@@ -119,6 +146,8 @@ async function main () {
     assert.equal(errors.length, 0)
     assert.equal(config.channels.lark.watchedChats.length, 0)
     assert.equal(config.channels.github.watchedRepos.length, 0)
+    assert.equal(config.version, 2)
+    assert.equal(config.channels.lark.accountId, '')
     assert.equal(config.channels.lark.pollSeconds, 60)
     assert.equal(config.safety.outbound, 'draft')
     assert.equal(config.safety.allowApprove, false)
@@ -341,6 +370,140 @@ async function main () {
     })
     assert.equal(result.status, 200)
     assert.equal(result.body.ok, true)
+  })
+
+
+  await check('config：v1 配置迁移为 v2（保留监听项，accountId 为空）', () => {
+    const { config } = normalizeConfig({
+      version: 1,
+      channels: {
+        lark: { identity: 'user', watchedChats: [{ chatId: 'oc_test', mode: 'all' }] },
+        github: { watchedRepos: [{ repo: 'acme/web' }] },
+      },
+    })
+    assert.equal(config.version, 2)
+    assert.equal(config.channels.lark.watchedChats.length, 1)
+    assert.equal(config.channels.github.watchedRepos.length, 1)
+    assert.equal(config.channels.lark.accountId, '')
+  })
+
+  await check('credentials：fallback 读写 / configuredKeys / 清除', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wb-cred-'))
+    try {
+      const store = new CredentialStore({ stateDir: dir })
+      await store.set('acc_x', 'accessToken', 'secret-access')
+      await store.set('acc_x', 'refreshToken', 'secret-refresh')
+      assert.equal(await store.get('acc_x', 'accessToken'), 'secret-access')
+      assert.deepEqual((await store.configuredKeys('acc_x')).sort(), ['accessToken', 'refreshToken'])
+      await store.clear('acc_x')
+      assert.equal(await store.get('acc_x', 'accessToken'), undefined)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await check('accounts：视图只回 configuredKeys，不含明文；退出清凭据', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wb-acc-'))
+    try {
+      const credential = new CredentialStore({ stateDir: dir })
+      const store = new AccountsStore({ stateDir: dir, log: () => {} }).load()
+      const service = new AccountsService({ store, credentials: credential, log: () => {} })
+      const account = service.createFeishu({ appId: 'cli_test', brand: 'feishu' })
+      await service.setAppSecret(account.id, 'super-secret-value')
+      const view = await service.view(service.get(account.id))
+      assert.equal(view.configuredKeys.includes('appSecret'), true)
+      assert.equal(JSON.stringify(view).includes('super-secret-value'), false)
+      await service.remove(account.id)
+      assert.equal(service.get(account.id), undefined)
+      assert.equal(await credential.get(account.id, 'appSecret'), undefined)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await check('feishu client：device flow 请求形状 / pending / 成功 / 消息解析', async () => {
+    const calls = []
+    let phase = 'pending'
+    const fetchImpl = jsonFetch(async (url, init) => {
+      calls.push({ url, init })
+      if (url.includes('/oauth/v1/device_authorization')) {
+        return response({ device_code: 'dc_1', user_code: 'AB12CD', verification_uri: 'https://example.local/verify', expires_in: 240, interval: 5 })
+      }
+      if (url.includes('/open-apis/authen/v2/oauth/token')) {
+        if (phase === 'pending') return response({ error: 'authorization_pending' }, { status: 400 })
+        return response({ access_token: 'at_1', refresh_token: 'rt_1', expires_in: 7200, refresh_token_expires_in: 604800, scope: 'im:message offline_access' })
+      }
+      if (url.includes('/open-apis/authen/v1/user_info')) return response({ code: 0, data: { name: 'Pony', open_id: 'ou_me' } })
+      if (url.includes('/open-apis/im/v1/messages')) {
+        return response({ code: 0, data: { items: [{ message_id: 'om_1', msg_type: 'text', create_time: '2000', body: { content: JSON.stringify({ text: 'see https://github.com/acme/web/pull/3' }) }, sender: { id: 'ou_other', sender_type: 'user' }, mentions: [{ id: { open_id: 'ou_me' } }] }], has_more: false } })
+      }
+      return response({ code: 0, data: {} })
+    })
+    const feishu = new FeishuClient({ http: createHttpClient({ fetchImpl }) })
+    const device = await feishu.deviceStart({ appId: 'cli_test', appSecret: 'sec', brand: 'feishu', scope: 'im:message' })
+    assert.equal(device.deviceCode, 'dc_1')
+    assert.ok(calls[0].init.headers.authorization.startsWith('Basic '))
+    const body = String(calls[0].init.body)
+    assert.ok(body.includes('client_id=cli_test'))
+    assert.ok(decodeURIComponent(body).includes('offline_access'))
+    const pending = await feishu.devicePoll({ appId: 'cli_test', appSecret: 'sec', brand: 'feishu', deviceCode: 'dc_1' })
+    assert.equal(pending.status, 'pending')
+    phase = 'ok'
+    const done = await feishu.devicePoll({ appId: 'cli_test', appSecret: 'sec', brand: 'feishu', deviceCode: 'dc_1' })
+    assert.equal(done.status, 'ok')
+    assert.equal(done.tokens.accessToken, 'at_1')
+    const info = await feishu.userInfo('at_1', 'feishu')
+    assert.equal(info.openId, 'ou_me')
+    const messages = await feishu.listMessages('at_1', 'feishu', { chatId: 'oc_test', startMs: 1000 })
+    assert.equal(messages.messages[0].text.includes('pull/3'), true)
+    assert.equal(messages.messages[0].mentions[0], 'ou_me')
+  })
+
+  await check('github client：PAT 校验 / scopes / 401 归类 auth', async () => {
+    const http = createHttpClient({ fetchImpl: jsonFetch(async (url, init) => {
+      if (String(init.headers.authorization).includes('bad')) return response({ message: 'Bad credentials' }, { status: 401 })
+      if (url.endsWith('/user')) return response({ login: 'PonyDevAI', name: 'Pony' }, { headers: { 'x-oauth-scopes': 'repo, read:org' } })
+      return response({}, { status: 404 })
+    }) })
+    const client = new GithubClient({ http })
+    const info = await client.user('tok')
+    assert.equal(info.login, 'PonyDevAI')
+    assert.deepEqual(info.scopes, ['repo', 'read:org'])
+    await assert.rejects(() => client.user('bad'), (error) => error.code === 'auth')
+  })
+
+  await check('account-auth：token 临近过期自动刷新并持久化', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wb-auth-'))
+    try {
+      const credential = new CredentialStore({ stateDir: dir })
+      const store = new AccountsStore({ stateDir: dir, log: () => {} }).load()
+      const service = new AccountsService({ store, credentials: credential, log: () => {} })
+      const account = service.createFeishu({ appId: 'cli_test', brand: 'feishu' })
+      await service.setAppSecret(account.id, 'sec')
+      await service.setTokens(account.id, {
+        accessToken: 'old-at', refreshToken: 'rt', scopes: ['im:message'],
+        expiresAt: new Date(Date.now() - 1000).toISOString(), refreshExpiresAt: new Date(Date.now() + 86400000).toISOString(),
+      })
+      const fakeFeishu = {
+        refresh: async () => ({ accessToken: 'new-at', refreshToken: 'new-rt', expiresIn: 7200, refreshExpiresIn: 604800 }),
+        userInfo: async () => ({ name: 'Pony', openId: 'ou_me', avatarUrl: '' }),
+      }
+      const auth = new AccountAuth({ accounts: service, credentials: credential, feishu: fakeFeishu, github: null, log: () => {} })
+      const token = await auth.feishuAccessToken(account.id)
+      assert.equal(token, 'new-at')
+      assert.equal(await service.token(account.id, 'accessToken'), 'new-at')
+      assert.equal(service.get(account.id).status, 'ok')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await check('api：accounts.list 走新端点且无明文', async () => {
+    const handler = createApiHandler(fakeApiDeps())
+    const result = await callApi(handler, { endpoint: 'accounts.list' })
+    assert.equal(result.status, 200)
+    assert.equal(result.body.ok, true)
+    assert.ok(Array.isArray(result.body.value.accounts))
   })
 
   const failed = results.filter((item) => !item.ok)

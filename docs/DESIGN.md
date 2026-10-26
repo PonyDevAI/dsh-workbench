@@ -2,7 +2,7 @@
 
 > 个人工作台：以 **Pony 本人身份**接入 Lark / 飞书 与 GitHub，按配置的规则接收**增量消息/事件**，分流给各功能模块（v1 只有 PR Review），结果以本人身份回写。
 >
-> 本文只写设计与契约，**不含实现**。图见 [architecture.png](architecture.png)、[flow.png](flow.png)、[layout-v2.png](layout-v2.png)、[feature-config.png](feature-config.png)。
+> 本文只写设计与契约，**不含实现**。账号与独立授权（v0.2.0）见 [accounts-auth.md](accounts-auth.md)。图见 [architecture.png](architecture.png)、[flow.png](flow.png)、[layout-v2.png](layout-v2.png)、[feature-config.png](feature-config.png)。
 
 ---
 
@@ -17,8 +17,8 @@
 | 状态目录 | `$DSH_HOME/workbench`（`config.json` / `state.json` / `workbench.log`） |
 | i18n NS | `dsh-workbench` |
 | engines | `dsh >=0.2.1-rc.2 <0.3.0`，`node >=22.5` |
-| 身份 | **全域 Pony 本人**：Lark/飞书 `lark-cli --as user`；GitHub `gh`（PonyDevAI） |
-| 不启用 | bot（ClawX）、`lark-mcp`、事件订阅、公网 webhook、新端口、独立服务 |
+| 身份 | **全域 Pony 本人**：插件独立账号（飞书 user OAuth Device Flow / GitHub PAT），运行时直连 OpenAPI/REST，不依赖 lark-cli/gh |
+| 不启用 | bot（ClawX）、`lark-mcp`、事件订阅、公网 webhook、新端口、独立服务；v0.2.0 起也不在运行时调用 lark-cli/gh |
 | 入口 | 左栏「工作台」= `sidebar.panellist` id `workbench` order `5`（插件 0 → 工作台 5 → 自动化任务 10） |
 | 主界面 | `main` key `workbench`（右侧主面板，**非全屏**） |
 | 设置页 | `settings.section` id `workbench`（仅全局配置） |
@@ -82,10 +82,11 @@ DSH Web（浏览器）
   └─ Client bundle：只渲染 UI、发 /workbench 请求、8s 轮询 state
 DSH Host 进程（与 dsh web 同进程）
   ├─ workbench Host 插件
-  │   ├─ Lark 轮询器（setInterval，60s）
-  │   ├─ GitHub 轮询器（setInterval，180s）
+  │   ├─ 账号/凭据层（accounts.json + ctx.credentials）
+  │   ├─ Lark 轮询器（setInterval，60s）→ 飞书 OpenAPI（user token）
+  │   ├─ GitHub 轮询器（setInterval，180s）→ GitHub REST（PAT）
   │   ├─ 规则匹配 + 串行队列（纯 JS，不占模型）
-  │   └─ Sinks：子进程 lark-cli / gh，写 $DSH_HOME/workbench
+  │   └─ v0.2.0 无 Sinks（只读），状态写 $DSH_HOME/workbench
   └─ DSH Agent 运行时
       └─ review 会话：workbench:review:<owner>-<repo>:pr-<n>（只读沙箱）
 ```
@@ -139,7 +140,7 @@ interface ChannelAdapter {
 }
 ```
 
-- **lark**：`lark-cli --as user`，轮询 `+chat-messages-list`（时间游标 + 升序 + 分页）；发送 `+messages-send` / `+messages-reply --as user`。
+- **lark**：插件账号（飞书 user OAuth）→ OpenAPI 轮询消息（时间游标 + 升序 + 分页）；发送留到 v0.3。
 - **github**：`gh api` 轮询 open PR；增量 `compare/{lastReviewedSha}...{headSha}`；发送 issue comment。
 - 新增渠道 = 一个 adapter 文件 + registry 元数据；不加内核分支。
 - 后续：钉钉 Stream（push）、企业微信（callback，需公网，放最后）。
@@ -240,12 +241,12 @@ v1 只注册 `pr-review`；自动回复、日报等后续新增，不改内核�
 
 ```jsonc
 {
-  "version": 1,
+  "version": 2,
 
   "channels": {
     "lark": {
       "enabled": true,
-      "identity": "user",                 // 固定 user
+      "accountId": "acc_xxx",              // 引用 accounts.json 里的飞书账号
       "pollSeconds": 60,                  // 30–300
       "watchedChats": [
         {
@@ -261,6 +262,7 @@ v1 只注册 `pr-review`；自动回复、日报等后续新增，不改内核�
     },
     "github": {
       "enabled": true,
+      "accountId": "acc_yyy",             // 引用 accounts.json 里的 GitHub 账号
       "pollSeconds": 180,                 // 60–3600
       "watchedRepos": [
         {
@@ -314,7 +316,7 @@ v1 只注册 `pr-review`；自动回复、日报等后续新增，不改内核�
 }
 ```
 
-校验规则：秒数范围、`workspace.mode=custom` 必须给 `cwd`、`watchRepos[].repo` 必须 `owner/repo`、`summaryChatId` 必须在已监听群里、任何入口为空 = 不监听。
+校验规则：秒数范围、`workspace.mode=custom` 必须给 `cwd`、`watchRepos[].repo` 必须 `owner/repo`、`summaryChatId` 必须在已监听群里、任何入口为空 = 不监听；v1 配置读入自动升级为 v2（`accountId` 为空）。
 
 ---
 
@@ -395,10 +397,10 @@ v1 只注册 `pr-review`；自动回复、日报等后续新增，不改内核�
 2. **默认草稿**：`safety.outbound` 默认 `draft`；确认后才真正发 GitHub 评论 / Lark 消息。
 3. **白名单**：只处理配置的会话与仓库；入口为空 = 不读不写。
 4. **只读 review**：`sandbox=read-only`、`approval=never`；不 approve / request changes / 合并 / 改代码。
-5. **凭据**：不新增 token；复用 `lark-cli` / `gh`；插件不落盘凭据；日志脱敏（不打印消息正文、diff 全文、token）。
+5. **凭据**：token / appSecret / PAT 只进 `ctx.credentials`（0600 fallback）；`accounts.json` 不含明文；API 只回 `configuredKeys`；日志脱敏（不打印正文、token、Authorization）。
 6. **频控**：轮询按游标增量 + 出站每小时上限；失败退避，不风暴。
 7. **保留**：正文 24h、历史 200 条、日志 7 天；可一键清空。
-8. **token 生命周期**：user token 失效时状态卡提示“需要 `lark-cli auth login`”，不自动重试、不反复刷接口。
+8. **token 生命周期**：access token 提前 5 分钟刷新、refresh token 轮换落库；401 / 刷新失败 → `needs_auth`，状态卡给「重新授权」，不自动重试、不静默续授。
 
 ---
 
@@ -407,7 +409,8 @@ v1 只注册 `pr-review`；自动回复、日报等后续新增，不改内核�
 | 版本 | 内容 | 验收 |
 |---|---|---|
 | v0.1 | 骨架：Lark/GitHub 轮询、游标、规则配置、消息/运行历史；**不自动动作** | 装进 profile，能看到增量与命中 |
-| v0.2 | PR Review Feature + 只读会话 + 工作台历史 | 手动触发能出 review |
+| **v0.2.0（当前）** | 账号与独立授权：账号模型 + 凭据桥 + 飞书 Device Flow + GitHub PAT + 原生 HTTP 客户端；运行时不再依赖 lark-cli/gh | 设置页能添加/授权/退出账号，轮询改用账号直连 |
+| v0.3 | PR Review Feature + 只读会话 + 工作台历史 | 手动触发能出 review |
 | v0.3 | Sinks + 草稿确认 + 自动触发 | 群里贴链接 → 草稿 → 确认 → GitHub 评论 + Lark 回复 |
 | v0.4 | 模型分类器 + 每功能模型/工作区配置 UI + 预算 | 设置页/抽屉可配 |
 | v0.5 | 自动回复 Feature（草稿优先） | 命中后可确认发送 |

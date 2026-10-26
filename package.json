@@ -1,7 +1,7 @@
 {
   "name": "@ponydev/dsh-workbench",
-  "version": "0.1.0",
-  "description": "DSH Web 插件：个人工作台——以本人身份接入 Lark/飞书与 GitHub，按规则接收增量消息并分流给功能模块（v0.1 只做采集/规则/历史）",
+  "version": "0.2.0",
+  "description": "DSH Web 插件：个人工作台——独立账号（飞书 Device Flow / GitHub PAT），以本人身份只读采集 Lark/GitHub 增量消息与 PR 动态",
   "keywords": [
     "dsh",
     "dsh-plugin",

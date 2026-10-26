@@ -4,3 +4,7 @@ node_modules/
 .DS_Store
 coverage/
 *.tmp
+secrets.json
+accounts.json
+state.json
+workbench.log*

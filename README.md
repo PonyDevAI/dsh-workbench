@@ -5,9 +5,9 @@
 
 **DeepSeek Harness（DSH）Web 插件：个人工作台——以 Pony 本人身份接入 Lark / 飞书与 GitHub，按白名单规则采集增量消息与 PR 动态，只做「采集 / 规则 / 历史」。**
 
-不是 bot、不是团队 SaaS、不是 IM 客户端：没有机器人身份、没有公网入口、没有事件订阅。数据来自本机已登录的 `lark-cli`（`--as user`）与 `gh`，凭据不由插件保管。
+不是 bot、不是团队 SaaS、不是 IM 客户端：没有机器人身份、没有公网入口、没有事件订阅。
 
-v0.1 是**骨架版**：装进 profile 后能看到「哪些消息 / PR 命中了哪条规则」，并保留可回看的运行记录；**不发送任何消息、不执行 review、不写 PR 评论**（后续版本才接 PR Review Feature 与草稿确认）。
+**v0.2.0 起插件自己管理账号与凭据**：飞书走 user OAuth **Device Flow**（粘贴 appId / appSecret → 链接 / 二维码 + `user_code` 确认 → token 由插件刷新），GitHub 粘贴 **PAT**；运行时**不再依赖 `lark-cli` / `gh`**，只保留一次性导入向导（可选）。采集仍是**只读**：v0.2.0 不发送消息、不评论、不执行 review（出站能力留给 v0.3）。
 
 ## 安装
 
@@ -15,7 +15,8 @@ v0.1 是**骨架版**：装进 profile 后能看到「哪些消息 / PR 命中�
 
 - DSH `>=0.2.1-rc.2 <0.3.0`
 - Node.js `>=22.5`（宿主自带，一般无需单独安装）
-- 本机已安装并登录 [lark-cli](https://github.com/PonyDevAI)（需 user 身份）与 [GitHub CLI `gh`](https://cli.github.com/)
+
+不需要预装或登录 `lark-cli` / `gh`；已有 `gh` 登录态的用户可以用「从 gh 导入」一次性取 PAT（可选）。
 
 ```bash
 # 本机开发：link 安装（<repo> 换成本仓库路径）
@@ -25,37 +26,47 @@ dsh plugin --profile web add link:<repo>
 dsh plugin --profile web add @ponydev/dsh-workbench
 ```
 
-装完重启 DSH Web 宿主并刷新页面（macOS 示例：`launchctl kickstart -k gui/$(id -u)/local.deepseek-harness.web`），然后打开左栏「工作台」。
-
-先确认两个本机身份可用（插件不接管登录）：
-
-```bash
-lark-cli auth status   # identities.user.available 应为 true
-gh auth status         # 已登录 PonyDevAI
-```
+装完重启 DSH Web 宿主并刷新页面（macOS 示例：`launchctl kickstart -k gui/$(id -u)/local.deepseek-harness.web`），然后打开 **设置 → 工作台 → 账号**。
 
 ## 快速开始
 
-1. **安装并重启**宿主，左栏出现「工作台」，右侧主面板显示状态卡。
-2. **添加监听会话**：设置 → 工作台 → Lark，点「添加群」会读取 `lark-cli` 的可见会话列表供选择，再设置模式（`mention` / `keyword` / `all` / `off`）与关键词。
-3. **添加监听仓库**：GitHub 里填 `owner/repo`，可选本地 `path`（为后续 review 预留）、是否响应新 PR / 新 commit、是否跳过 draft、label 过滤。
-4. **保存后看历史**：Host 按配置轮询；首次监听只建基线，下一次轮询起只处理增量，命中项进「最近事件」。
+1. **添加飞书账号**：设置 → 工作台 → 账号 → 「添加飞书账号」，填 `appId` / `appSecret`、选 `brand`（飞书 / Lark）与 scope（默认 `im:message offline_access`）→ 点「授权」。
+2. **完成 Device Flow**：面板显示授权链接（本地二维码）与 `user_code`，在飞书里打开链接、确认授权并输入 `user_code`。Host 会在后台按返回的 `interval` 轮询，页面可以关掉；授权成功后账号卡显示身份（name / open_id）。
+3. **添加 GitHub 账号**：粘贴 PAT（classic `repo`；或 fine-grained 的 `Pull requests: read`）→ 「连接」，成功后显示 `login`（如 `PonyDevAI`）。可选「从 gh 导入」。
+4. **配置监听**：Lark 群 / 私聊与 GitHub 仓库分别选择「使用账号」（写入 `channels.lark.accountId` / `channels.github.accountId`），设置匹配模式与关键词。
+5. **保存后看历史**：Host 按配置轮询；首次监听只建基线，下一次轮询起只处理增量，命中项进「最近事件」。
 
-配置只在 Host 侧归一化并持久化，设置页只是编辑器；`watchedChats` / `watchedRepos` 为空时插件**不读不写**。
+没有配置账号的渠道不轮询，状态卡提示「未连接账号」；`watchedChats` / `watchedRepos` 为空时同样**不读不写**。
 
-## v0.1 能力边界
+## 账号与授权（v0.2.0）
+
+账号独立于监听配置，存在 `$DSH_HOME/workbench/accounts.json`；**只存非机密元数据**（provider / 身份 / 状态 / scope / 过期时间），token 与 appSecret 全在凭据层。
+
+| 平台 | 授权方式 | 说明 |
+|---|---|---|
+| 飞书 / Lark | user OAuth **Device Flow** | `appId` / `appSecret` 在账号表单填写；Device Flow 无回调地址，不新增公网入口 |
+| GitHub | **PAT**（v0.2.0） | 校验 `GET /user`；GitHub Device Flow 留 v0.3+ |
+
+- **凭据层**：优先宿主 `ctx.credentials`（key `dsh-workbench/<accountId>/<field>`）；宿主没有该服务时回落 `$DSH_HOME/workbench/secrets.json`（目录 0700、文件 0600、原子写）。API 只回 `configuredKeys`（字段名），**永不回明文**。
+- **token 生命周期**：飞书 access token 提前 5 分钟刷新，refresh token 轮换并持久化；同一账号同一时刻只有一个刷新请求（单飞）。
+- **401 / 刷新失败**：账号标 `needs_auth`，**不重试、不风暴**，等你在账号页点「重新授权」；不会静默续授、不会自动弹浏览器。
+- **状态**：`ok` / `pending_auth`（授权中）/ `needs_auth`（需重新授权）/ `error`；退出会删除账号与凭据。
+- **退出**：清空该账号的全部凭据并移除账号记录；重新使用需要重新授权。
+
+## v0.2.0 能力边界
 
 | 做 | 不做 |
 |---|---|
-| 以本人身份轮询 Lark 会话消息与 GitHub open PR（只读） | 发送 / 回复 Lark 消息 |
-| 白名单 + 规则匹配（@我 / 关键词 / 全部 / `/review` 命令；draft / labels / opened / new-commits） | 执行 review、评论 PR、approve / request changes / 合并 |
-| 提取消息里的 GitHub PR 链接 | 修改代码、写工作区 |
-| 运行记录与当天统计（`state.json`），可在主面板回看 | bot 身份、公网 webhook、事件订阅、新端口 |
-| 设置页编辑 channels / defaults / storage（安全边界只读展示） | 模型分类器（配置位保留）、自动回复、日报 |
+| 插件自己的账号体系（`accounts[]`，`acc_<12hex>`）与凭据桥 | bot 身份、公网 webhook、事件订阅、新端口 |
+| 飞书 user OAuth Device Flow + token 自动刷新；GitHub PAT | GitHub Device Flow（v0.3+）、组织级 App 安装 |
+| 以账号身份只读轮询飞书消息与 GitHub open PR（原生 HTTP，`fetch`） | 发送 / 回复飞书消息、评论 PR、approve / request changes / 合并 |
+| 白名单 + 规则匹配（@我 / 关键词 / 全部 / `/review`；draft / labels / opened / new-commits） | 执行 review、修改代码、写工作区（review 留 v0.3） |
+| 运行记录与当天统计，可在主面板回看 | 模型分类器（配置位保留）、自动回复、日报 |
+| 设置页：账号 / 监听 / 默认 / 存储 | 每功能独立设置页 |
 
-> `features['pr-review']` 与 `router.classifier` 的配置从第一天就存在，但 v0.1 **只读写配置、不消费**；PR Review 在 v0.2 落地。
+> `features['pr-review']` 与 `router.classifier` 的配置从第一天就存在，但 v0.2.0 **只读写配置、不消费**；PR Review 在 v0.3 落地。
 
-## 配置
+## 配置（config v2）
 
 `cordis.patch.yml` 插入插件行（插件 insert id `workbench`）：
 
@@ -69,17 +80,16 @@ gh auth status         # 已登录 PonyDevAI
         githubPollSeconds: 180  # 60–3600
 ```
 
-日常配置在 **设置 → 工作台** 编辑 `channels.lark` / `channels.github` / `defaults` / `storage`（安全边界只做只读展示，不提供开关）；完整 schema 见 [`docs/DESIGN.md`](docs/DESIGN.md) §8，可直接参考 [`docs/config.example.json`](docs/config.example.json)：
+日常配置在 **设置 → 工作台** 编辑（安全边界只做只读展示）；`config.json` 为 **v2**，在 v0.1 结构上新增账号引用：
 
-- `channels.lark`：`enabled`、`identity`（固定 `user`）、`pollSeconds`、`watchedChats[]`（`chatId` / `name` / `type` / `mode` / `keywords` / `allowReviewCommand`）、`p2pWhitelist`（私聊 open_id 白名单，schema 预留；v0.1 只处理显式加入 `watchedChats` 的会话）。
-- `channels.github`：`enabled`、`pollSeconds`、`watchedRepos[]`（`repo` / `path` / `onOpened` / `onNewCommits` / `skipDraft` / `labels`）。
-- `features['pr-review']`：模型、工作区、sinks、预算、权限（v0.1 预留）。
-- `router.classifier`：模型分类器开关与预算（v0.1 预留，默认关闭）。
-- `defaults`：默认模型、默认工作区。
-- `safety`：`outbound`（默认 `draft`）、`rateLimitPerHour`、`allowApprove`（恒 `false`）。
-- `storage`：日志保留天数、正文保留时长、历史条数（v0.1 实际生效的是历史条数上限，其余为配置位）。
+- `channels.lark`：`enabled`、`accountId`、`pollSeconds`、`watchedChats[]`（`chatId` / `name` / `type` / `mode` / `keywords` / `allowReviewCommand`）、`p2pWhitelist`（schema 预留；v0.2.0 只处理显式加入 `watchedChats` 的会话）。
+- `channels.github`：`enabled`、`accountId`、`pollSeconds`、`watchedRepos[]`（`repo` / `path` / `onOpened` / `onNewCommits` / `skipDraft` / `labels`）。
+- `features['pr-review']`、`router.classifier`：v0.3+ 预留。
+- `defaults` / `safety` / `storage`：默认模型与工作区、出站策略（`draft`，`allowApprove` 恒 `false`）、保留策略。
 
-轮询按游标增量 + `message_id` 去重；配置保存后 Host 热重排轮询，新监听的会话 / 仓库先建基线。
+**迁移**：v0.1 的 `config.json` 读入后自动升级为 `version: 2`，`accountId` 为空；账号需要用户在 UI 里授权（不会自动创建、不会静默沿用旧 CLI 登录态）。未配置 `accountId` = 该渠道不轮询。
+
+完整 schema 见 [`docs/DESIGN.md`](docs/DESIGN.md) §8 与 [`docs/accounts-auth.md`](docs/accounts-auth.md) §5，结构示例见 [`docs/config.example.json`](docs/config.example.json)（v2）；Host ⇄ Client 协议见 [`docs/api-contract.md`](docs/api-contract.md)。
 
 ## 数据目录
 
@@ -87,34 +97,40 @@ gh auth status         # 已登录 PonyDevAI
 
 ```
 $DSH_HOME/workbench/
-├── config.json     # 归一化后的全局配置（设置页保存写入）
+├── config.json     # 归一化后的全局配置（v2；设置页保存写入）
+├── accounts.json   # 账号元数据：provider / 身份 / 状态 / scope / 过期时间（无明文凭据）
+├── secrets.json    # 仅当宿主没有 ctx.credentials 时存在的凭据兜底（0600）
 ├── state.json      # 游标 / 去重集合 / GitHub 已见 sha / 事件历史 / 当天统计
 └── workbench.log   # 运行日志（脱敏；超过 1 MiB 轮转到 workbench.log.1）
 ```
 
-`state.json` 损坏时先备份 `.corrupt-<ts>-<pid>` 再回落空状态，不覆盖唯一副本。
+`state.json` / `accounts.json` 损坏时先备份 `.corrupt-<ts>-<pid>` 再回落，不覆盖唯一副本。
 
 ## 安全
 
 - **管理面**：`POST /workbench` 全部经宿主 `ctx.connection.admit` 认证；写操作要求 `x-dsh-workbench-client: 1`；请求体 ≤1 MiB、只收 JSON。
-- **身份**：Lark / 飞书固定 `lark-cli --as user`，GitHub 用 `gh` 的 PonyDevAI 身份；不切 bot、不伪装机器人。
+- **凭据只进凭据层**：token / appSecret / PAT 只在 `ctx.credentials`（或 0600 fallback），`accounts.json`、日志、API 回包、事件历史都不含明文；API 只回 `configuredKeys`。
+- **最小 scope**：飞书默认只申请 `im:message`（读）+ `offline_access`；发送类 scope 留到 v0.3 且显式提示。GitHub PAT 提示 `repo` 即可。
+- **401 不重试**：标 `needs_auth` 等用户重新授权；刷新失败不风暴，不静默续授。
+- **退出即删凭据**：账号退出会清空凭据层字段并移除账号记录。
+- **运行时零 CLI 依赖**：轮询与采集只用 `fetch` 直连飞书 OpenAPI / GitHub REST；`lark-cli` / `gh` 只在一次性导入向导里可选调用。
 - **白名单零监听**：只处理 `watchedChats` / `watchedRepos` 里配置的会话与仓库；入口为空 = 不读不写。
-- **只读**：v0.1 不产生任何出站动作；`safety.outbound` 默认 `draft`，`safety.allowApprove` 设计上恒为 `false`。
-- **凭据**：复用本机 `lark-cli` / `gh` 登录态，插件不落盘 token、不回显凭据；token 失效只在状态卡提示重新登录。
-- **日志与保留**：不打印消息正文 / diff 全文 / token；消息正文不落盘（只进内存与截断后的事件标题），历史默认 200 条可配，日志按 1 MiB 轮转；「清空历史」只清事件 / 统计，不动游标与去重集合。
-- **仓库门禁**：禁止真实凭据、真实 Lark 会话 ID、本机绝对路径、私有主机名、私钥进入版本库（`scripts/check-privacy.mjs`）。
+- **只读**：v0.2.0 不产生任何出站动作；`safety.outbound` 默认 `draft`，`safety.allowApprove` 设计上恒为 `false`。
+- **日志与保留**：不打印消息正文 / diff 全文 / token / Authorization 头；消息正文不落盘（只进内存与截断后的事件标题），历史默认 200 条可配，日志按 1 MiB 轮转；「清空历史」只清事件 / 统计，不动游标与去重集合。
+- **仓库门禁**：禁止真实凭据、真实飞书会话 ID、本机绝对路径、私有主机名、私钥进入版本库（`scripts/check-privacy.mjs`）。
 
 ## 开发与门禁
 
 ```bash
 npm run check        # 语法 + i18n + 隐私 + 插件标识一致性（四道门禁）
-npm run smoke        # Host 侧离线冒烟（不触网）
+npm run smoke        # Host 侧离线冒烟（mock fetch，不触网）
+npm run test-ui      # 离线渲染 test-render.html（假数据，含账号区状态）
 node scripts/check-syntax.mjs    # lib/**/*.js 逐个 node --check
 node scripts/check-i18n.mjs      # DICT_ZH/DICT_EN 键一致 + t('key') + locale 元数据 + NS
-node scripts/check-privacy.mjs   # 本机路径 / 真实 token / 真实 Lark ID / 私有主机名
+node scripts/check-privacy.mjs   # 本机路径 / 真实 token / 真实会话 ID / 私有主机名
 node scripts/verify-plugin.mjs   # package.json exports / engines / manifestVersion / patch / client id
 node scripts/release-notes.mjs   # 从 CHANGELOG 抽取当前版本（可带输出路径参数）
-node --check scripts/*.mjs       # 门禁脚本自身的语法
+for f in scripts/*.mjs; do node --check "$f"; done   # 门禁脚本自身语法
 ```
 
 `lib/client.js` 由 Client 半区手写（无构建、零运行时依赖），用 `test-render.html` 的假数据离线自测 UI，不需要重启宿主。
@@ -124,29 +140,38 @@ node --check scripts/*.mjs       # 门禁脚本自身的语法
 | 文档 | 内容 |
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | 定位、入口槽位、数据流、Feature 契约、config / state schema、安全不变量、里程碑 |
+| [docs/accounts-auth.md](docs/accounts-auth.md) | v0.2.0 账号模型、凭据键、飞书 Device Flow、GitHub PAT、配置迁移、API 契约 |
 | [docs/api-contract.md](docs/api-contract.md) | Host ⇄ Client `POST /workbench` 契约与错误码 |
-| [docs/config.example.json](docs/config.example.json) | 完整的 `config.json` 示例 |
+| [docs/config.example.json](docs/config.example.json) | `config.json` v2 结构示例（账号引用 + 监听规则） |
 | [AGENTS.md](AGENTS.md) | 项目规范（目录职责、门禁、代码 / 安全 / UI / 发布 / 提交规范） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本说明（GitHub Release 正文来源） |
 
 ## 结构
 
 ```
-lib/index.js       Host 入口：/workbench 路由、认证围栏、轮询器装配、状态目录
-lib/config.js      配置默认值 / 归一化 / 保存
-lib/lark.js        Lark / 飞书渠道（lark-cli user 身份轮询，只读）
-lib/github.js      GitHub 渠道（gh api 只读 open PR）
-lib/rules.js       规则匹配（纯函数，可离线测试）
-lib/state.js       运行时状态（游标 / 去重 / 事件历史 / 统计）
-lib/store.js       私有目录 + 原子 JSON 存储
-lib/shell.js       子进程封装（execFile，不拼 shell）
-lib/log.js         脱敏日志
-lib/client.js      手写 ModuleLoader bundle：工作台面板 + 设置页 + i18n
-cordis.patch.yml   bundle patch（插入 id: workbench + 默认配置）
-locale/            zh / en 元数据（title / description）
-scripts/           门禁与离线测试（check-syntax / check-i18n / check-privacy / verify-plugin / release-notes / smoke）
-docs/              DESIGN、api-contract、config.example.json
-test-render.html   离线 UI 渲染页（假数据）
+lib/index.js          Host 入口：/workbench 路由、认证围栏、轮询器装配、状态目录
+lib/config.js         配置默认值 / 归一化 / 保存（v1 → v2 迁移）
+lib/accounts.js       账号存储与视图（accounts.json，只存非机密元数据）
+lib/account-auth.js   账号授权与 token 生命周期（飞书 Device Flow / 刷新 / PAT）
+lib/credentials.js    凭据桥（ctx.credentials 优先，0600 secrets.json 兜底）
+lib/http.js           轻量 HTTP 客户端（fetch + 超时 + 错误分类 + 退避）
+lib/clients/feishu.js 飞书 OpenAPI 客户端（device / token / user / chats / messages）
+lib/clients/github.js GitHub REST 客户端（/user、pulls，只读）
+lib/channels/lark.js  飞书渠道适配器（账号 user token + 原生 API 轮询，只读）
+lib/channels/github.js GitHub 渠道适配器（账号 PAT + REST 轮询，只读）
+lib/api.js            管理面端点（state / accounts.* / config.save / 轮询 / 历史）
+lib/poller.js         采集引擎（轮询 + 规则 + 事件历史）
+lib/rules.js          规则匹配（纯函数，可离线测试）
+lib/state.js          运行时状态（游标 / 去重 / 事件历史 / 统计）
+lib/store.js          私有目录 + 原子 JSON 存储
+lib/shell.js          子进程封装（execFile；仅一次性导入 gh token 时使用）
+lib/log.js            脱敏日志
+lib/client.js         手写 ModuleLoader bundle：工作台面板 + 设置页（账号 / 监听 / 默认 / 存储）+ i18n
+cordis.patch.yml      bundle patch（插入 id: workbench + 默认配置）
+locale/               zh / en 元数据（title / description）
+scripts/              门禁与离线测试（check-syntax / check-i18n / check-privacy / verify-plugin / release-notes / smoke / render-test）
+docs/                 DESIGN、accounts-auth、api-contract
+test-render.html      离线 UI 渲染页（假数据；含账号状态）
 ```
 
 ## License

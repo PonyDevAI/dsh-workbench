@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Workbench",
-    "description": "Connect Lark and GitHub as your own identity and read-only collect incremental messages and pull request activity as reviewable events; v0.1 sends no messages and runs no reviews."
+    "description": "Read-only Lark and GitHub workbench running as your own identity: the plugin manages its own accounts and authorization (Feishu device flow / GitHub PAT), collects incremental activity by allowlist rules and records reviewable events; v0.2.0 still sends no messages and runs no reviews."
   }
 }
